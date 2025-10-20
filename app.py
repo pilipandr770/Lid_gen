@@ -1,0 +1,153 @@
+import argparse
+import asyncio
+import sys
+from typing import Optional
+
+from config import settings
+from storage import init_db, insert_lead, export_csv
+from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages
+from openai_classifier import classify_comment
+
+from telethon.errors import SessionPasswordNeededError
+
+def _safe_name(user) -> str:
+    parts = []
+    if getattr(user, "first_name", None):
+        parts.append(user.first_name)
+    if getattr(user, "last_name", None):
+        parts.append(user.last_name)
+    return " ".join(parts).strip() or (user.username or f"id{user.id}")
+
+async def login_flow(client):
+    await client.connect()
+    if not await client.is_user_authorized():
+        phone = settings.telegram_phone
+        if not phone:
+            print("TELEGRAM_PHONE не задано у .env")
+            sys.exit(1)
+        await client.send_code_request(phone)
+        code = input("Введи код з Telegram/SMS: ")
+        try:
+            await client.sign_in(phone=phone, code=code)
+        except SessionPasswordNeededError:
+            pw = input("Увімкнено 2FA. Введи пароль: ")
+            await client.sign_in(password=pw)
+
+async def scan_once():
+    init_db()
+    client = make_client()
+    await login_flow(client)
+
+    async with client:
+        for ch in settings.target_channels:
+            try:
+                print(f"[INFO] Сканування каналу: {ch}")
+                ch_ent, linked_id = await resolve_linked_chat(client, ch)
+                if not linked_id:
+                    print(f"[WARN] Канал {ch}: немає пов'язаного чату для коментарів.")
+                    continue
+
+                admin_ids = await get_admin_ids(client, linked_id)
+                print(f"[INFO] Знайдено {len(admin_ids)} адмінів у чаті")
+                
+                # Прохід за коментарями
+                message_count = 0
+                leads_found = 0
+                
+                async for msg in iter_recent_discussion_messages(client, linked_id, settings.days_lookback):
+                    message_count += 1
+                    if not msg.message or not msg.sender_id:
+                        continue
+                    
+                    user = await msg.get_sender()
+                    if not user:
+                        continue
+
+                    author_display = _safe_name(user)
+                    is_admin_or_verified = (user.id in admin_ids) or bool(getattr(user, "verified", False)) \
+                        or bool(getattr(user, "bot", False))
+
+                    # Класифікація
+                    cls = classify_comment(
+                        text=msg.message,
+                        author_display=author_display,
+                        is_verified_or_admin=is_admin_or_verified,
+                        interest_keywords=settings.interest_keywords
+                    )
+
+                    # Пропускаємо явних промо або низьку впевненість
+                    if cls["role"] != "potential_client":
+                        continue
+                    if cls["confidence"] < settings.lead_confidence_threshold:
+                        continue
+
+                    username = f"@{user.username}" if user.username else ""
+                    # Побудова посилання на повідомлення
+                    msg_link = ""
+                    if hasattr(ch_ent, "username") and ch_ent.username:
+                        # Для публічних чатів можна спробувати побудувати лінк
+                        msg_link = f"https://t.me/{ch_ent.username}/{msg.id}"
+
+                    row = {
+                        "user_id": user.id,
+                        "username": username,
+                        "display_name": author_display,
+                        "channel": ch,
+                        "message_id": msg.id,
+                        "message_text": msg.message[:1000],
+                        "role_label": cls["role"],
+                        "confidence": cls["confidence"],
+                        "reason": cls["reason"],
+                        "message_link": msg_link
+                    }
+                    insert_lead(row)
+                    leads_found += 1
+                    print(f"[LEAD] {author_display} ({cls['confidence']:.2f}): {cls['reason']}")
+
+                print(f"[OK] Канал {ch}: переглянуто {message_count} повідомлень, знайдено {leads_found} лідів")
+                
+            except Exception as e:
+                print(f"[ERROR] {ch}: {e}")
+
+    # Експорт останнього зрізу
+    path = export_csv()
+    print(f"[INFO] Експортовано у {path}")
+
+async def stream_loop():
+    # Простий "пульс" кожні N хвилин — можеш замінити на планувальник/Windows Task Scheduler
+    import time
+    while True:
+        try:
+            print(f"[STREAM] Початок циклу сканування...")
+            await scan_once()
+            print(f"[STREAM] Цикл завершено. Пауза 5 хвилин...")
+        except Exception as e:
+            print("[STREAM ERROR]", e)
+        time.sleep(300)  # 5 хвилин пауза
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--once", action="store_true", help="Разове сканування")
+    parser.add_argument("--stream", action="store_true", help="Безкінечний цикл (кожні 5 хвилин)")
+    args = parser.parse_args()
+
+    if not settings.target_channels:
+        print("Заповни TARGET_CHANNELS у .env (через кому).")
+        sys.exit(1)
+    if not settings.openai_api_key:
+        print("OPENAI_API_KEY не вказано у .env.")
+        sys.exit(1)
+
+    print(f"[INFO] Налаштування завантажено:")
+    print(f"  - Канали: {settings.target_channels}")
+    print(f"  - Ключові слова: {settings.interest_keywords}")
+    print(f"  - Днів назад: {settings.days_lookback}")
+    print(f"  - Поріг впевненості: {settings.lead_confidence_threshold}")
+
+    if args.stream:
+        asyncio.run(stream_loop())
+    else:
+        asyncio.run(scan_once())
+
+if __name__ == "__main__":
+    main()
