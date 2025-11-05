@@ -55,66 +55,74 @@ async def has_profile_photo(client: TelegramClient, user_id: int) -> bool:
 
 async def add_contact(client: TelegramClient, user_id: int, first_name: str, last_name: str = "", phone: str = "") -> bool:
     """
-    Додає користувача до контактів.
-    Якщо номер телефону невідомий, використовує ім'я як ідентифікатор.
+    Додає користувача до контактів через username або ID.
     """
     try:
-        # Обробляємо None значення
-        first_name = (first_name or "").strip()
-        last_name = (last_name or "").strip()
-        phone = (phone or "").strip()
+        print(f"[DEBUG] Початок додавання контакту для user_id={user_id}")
 
-        # Очищаємо ім'я від спеціальних символів та обмежуємо довжину
-        def clean_name(name: str) -> str:
-            if not name:
-                return ""
-            # Видаляємо емодзі та спеціальні символи
-            import re
-            name = re.sub(r'[^\w\s\-_]', '', name)
-            # Обмежуємо довжину
-            return name[:50] if name else ""
+        # Спробуємо отримати інформацію про користувача
+        try:
+            user = await client.get_entity(user_id)
+            print(f"[DEBUG] Отримано інформацію про користувача: @{user.username}, ім'я: {getattr(user, 'first_name', 'N/A')}")
+        except Exception as e:
+            print(f"[ERROR] Не вдалося отримати інформацію про користувача {user_id}: {e}")
+            return False
 
-        first_name = clean_name(first_name)
-        last_name = clean_name(last_name)
+        # Якщо є username - використовуємо його для додавання контакту
+        if user.username:
+            print(f"[DEBUG] Додавання контакту через username: @{user.username}")
 
-        # Створюємо повне ім'я
-        full_name = f"{first_name} {last_name}".strip()
-        if not full_name:
-            full_name = f"User_{user_id}"
+            # Використовуємо AddContactRequest замість ImportContactsRequest
+            from telethon.tl.functions.contacts import AddContactRequest
+            from telethon.tl.types import InputUser
 
-        # Якщо є номер телефону - використовуємо його
-        if phone and phone.startswith('+'):
-            contact = InputPhoneContact(
-                client_id=0,
-                phone=phone,
+            # Створюємо InputUser з username
+            input_user = await client.get_input_entity(user.username)
+
+            # Обробляємо ім'я
+            first_name = (getattr(user, 'first_name', '') or '').strip()
+            last_name = (getattr(user, 'last_name', '') or '').strip()
+
+            # Очищаємо ім'я від спеціальних символів
+            def clean_name(name: str) -> str:
+                if not name:
+                    return ""
+                import re
+                name = re.sub(r'[^\w\s\-_]', '', name)
+                return name[:50] if name else ""
+
+            first_name = clean_name(first_name)
+            last_name = clean_name(last_name)
+
+            if not first_name:
+                first_name = user.username
+
+            print(f"[DEBUG] Додавання контакту: first_name='{first_name}', last_name='{last_name}'")
+
+            result = await client(AddContactRequest(
+                id=input_user,
                 first_name=first_name,
-                last_name=last_name
-            )
-            result = await client(ImportContactsRequest([contact]))
-            if result.imported:
-                print(f"[SUCCESS] Контакт '{full_name}' доданий з номером {phone}")
-                return True
-        else:
-            # Якщо номера немає - просто позначаємо як контакт через ім'я
-            # Це створить "тимчасовий" контакт без номера
-            contact_name = first_name or full_name
-            contact = InputPhoneContact(
-                client_id=user_id,
-                phone="",  # Порожній номер
-                first_name=contact_name,
-                last_name=last_name
-            )
-            result = await client(ImportContactsRequest([contact]))
-            if result.imported:
-                print(f"[SUCCESS] Контакт '{full_name}' доданий як тимчасовий")
-                return True
+                last_name=last_name,
+                phone="",  # Порожній телефон
+                add_phone_privacy_exception=False
+            ))
 
-        print(f"[WARN] Не вдалося додати контакт '{full_name}' (можливо вже існує)")
-        return False
+            if result:
+                print(f"[SUCCESS] Контакт @{user.username} доданий до адресної книги!")
+                return True
+            else:
+                print(f"[WARN] Не вдалося додати контакт @{user.username}")
+                return False
+
+        else:
+            print(f"[WARN] Користувач {user_id} не має username - неможливо додати до контактів без номера телефону")
+            return False
 
     except Exception as e:
-        full_name = f"{first_name or ''} {last_name or ''}".strip() or f"User_{user_id}"
-        print(f"[ERROR] Помилка додавання контакту '{full_name}': {str(e)}")
+        print(f"[ERROR] Помилка додавання контакту для user_id={user_id}: {str(e)}")
+        print(f"[ERROR] Тип помилки: {type(e).__name__}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return False
 
 async def get_contacts_list(client: TelegramClient) -> set[int]:
@@ -122,10 +130,12 @@ async def get_contacts_list(client: TelegramClient) -> set[int]:
     Отримує список ID всіх контактів користувача.
     """
     try:
+        print("[DEBUG] Отримання списку контактів...")
         contacts = await client(GetContactsRequest(hash=0))
         contact_ids = set()
         for user in contacts.users:
             contact_ids.add(user.id)
+        print(f"[DEBUG] Отримано {len(contact_ids)} контактів з Telegram API")
         return contact_ids
     except Exception as e:
         print(f"[ERROR] Не вдалося отримати список контактів: {e}")
