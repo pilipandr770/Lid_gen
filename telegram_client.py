@@ -50,7 +50,7 @@ async def has_profile_photo(client: TelegramClient, user_id: int) -> bool:
         photos = await client.get_profile_photos(user_id, limit=1)
         return len(photos) > 0
     except Exception as e:
-        print(f"[WARN] Не вдалося перевірити аватарку для користувача {user_id}: {e}")
+        # Тихо обробляємо помилки - користувач може бути недоступний
         return False
 
 async def add_contact(client: TelegramClient, user_id: int, first_name: str, last_name: str = "", phone: str = "") -> bool:
@@ -59,6 +59,16 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
     Якщо номер телефону невідомий, використовує ім'я як ідентифікатор.
     """
     try:
+        # Обробляємо None значення
+        first_name = first_name or ""
+        last_name = last_name or ""
+        phone = phone or ""
+
+        # Створюємо повне ім'я
+        full_name = f"{first_name} {last_name}".strip()
+        if not full_name:
+            full_name = f"User_{user_id}"
+
         # Якщо є номер телефону - використовуємо його
         if phone and phone.startswith('+'):
             contact = InputPhoneContact(
@@ -69,7 +79,7 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
             )
             result = await client(ImportContactsRequest([contact]))
             if result.imported:
-                print(f"[SUCCESS] Контакт {first_name} доданий з номером {phone}")
+                print(f"[SUCCESS] Контакт '{full_name}' доданий з номером {phone}")
                 return True
         else:
             # Якщо номера немає - просто позначаємо як контакт через ім'я
@@ -77,19 +87,20 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
             contact = InputPhoneContact(
                 client_id=user_id,
                 phone="",  # Порожній номер
-                first_name=first_name,
+                first_name=first_name or full_name,
                 last_name=last_name
             )
             result = await client(ImportContactsRequest([contact]))
             if result.imported:
-                print(f"[SUCCESS] Контакт {first_name} доданий як тимчасовий")
+                print(f"[SUCCESS] Контакт '{full_name}' доданий як тимчасовий")
                 return True
 
-        print(f"[WARN] Не вдалося додати контакт {first_name}")
+        print(f"[WARN] Не вдалося додати контакт '{full_name}'")
         return False
 
     except Exception as e:
-        print(f"[ERROR] Помилка додавання контакту {first_name}: {e}")
+        full_name = f"{first_name or ''} {last_name or ''}".strip() or f"User_{user_id}"
+        print(f"[ERROR] Помилка додавання контакту '{full_name}': {e}")
         return False
 
 async def get_contacts_list(client: TelegramClient) -> set[int]:
