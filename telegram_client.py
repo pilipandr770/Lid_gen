@@ -58,23 +58,17 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
     Додає користувача до контактів через username або ID.
     """
     try:
-        print(f"[DEBUG] Початок додавання контакту для user_id={user_id}")
-
         # Спробуємо отримати інформацію про користувача
         try:
             user = await client.get_entity(user_id)
-            print(f"[DEBUG] Отримано інформацію про користувача: @{user.username}, ім'я: {getattr(user, 'first_name', 'N/A')}")
         except Exception as e:
             print(f"[ERROR] Не вдалося отримати інформацію про користувача {user_id}: {e}")
             return False
 
         # Якщо є username - використовуємо його для додавання контакту
         if user.username:
-            print(f"[DEBUG] Додавання контакту через username: @{user.username}")
-
             # Використовуємо AddContactRequest замість ImportContactsRequest
             from telethon.tl.functions.contacts import AddContactRequest
-            from telethon.tl.types import InputUser
 
             # Створюємо InputUser з username
             input_user = await client.get_input_entity(user.username)
@@ -97,8 +91,6 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
             if not first_name:
                 first_name = user.username
 
-            print(f"[DEBUG] Додавання контакту: first_name='{first_name}', last_name='{last_name}'")
-
             result = await client(AddContactRequest(
                 id=input_user,
                 first_name=first_name,
@@ -108,21 +100,18 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
             ))
 
             if result:
-                print(f"[SUCCESS] Контакт @{user.username} доданий до адресної книги!")
+                print(f"[SUCCESS] Контакт @{user.username} доданий")
                 return True
             else:
                 print(f"[WARN] Не вдалося додати контакт @{user.username}")
                 return False
 
         else:
-            print(f"[WARN] Користувач {user_id} не має username - неможливо додати до контактів без номера телефону")
+            print(f"[SKIP] Немає username - пропускаємо")
             return False
 
     except Exception as e:
-        print(f"[ERROR] Помилка додавання контакту для user_id={user_id}: {str(e)}")
-        print(f"[ERROR] Тип помилки: {type(e).__name__}")
-        import traceback
-        print(f"[ERROR] Traceback: {traceback.format_exc()}")
+        print(f"[ERROR] Помилка додавання контакту: {str(e)}")
         return False
 
 async def get_contacts_list(client: TelegramClient) -> set[int]:
@@ -130,12 +119,10 @@ async def get_contacts_list(client: TelegramClient) -> set[int]:
     Отримує список ID всіх контактів користувача.
     """
     try:
-        print("[DEBUG] Отримання списку контактів...")
         contacts = await client(GetContactsRequest(hash=0))
         contact_ids = set()
         for user in contacts.users:
             contact_ids.add(user.id)
-        print(f"[DEBUG] Отримано {len(contact_ids)} контактів з Telegram API")
         return contact_ids
     except Exception as e:
         print(f"[ERROR] Не вдалося отримати список контактів: {e}")

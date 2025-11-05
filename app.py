@@ -41,7 +41,6 @@ async def scan_once():
         print("[INFO] Завантаження списку контактів...")
         contacts_cache = await get_contacts_list(client)
         print(f"[INFO] Знайдено {len(contacts_cache)} контактів у адресній книзі")
-        print(f"[DEBUG] ID контактів: {sorted(list(contacts_cache))[:10]}..." if len(contacts_cache) > 10 else f"[DEBUG] ID контактів: {sorted(list(contacts_cache))}")
 
         total_messages_processed = 0
         total_leads_found = 0
@@ -113,20 +112,12 @@ async def scan_once():
                     last_name = getattr(user, "last_name", "")
                     phone = getattr(user, "phone", "")
 
-                    print(f"[DEBUG] Спроба додати контакт для користувача {user.id}:")
-                    print(f"  - Ім'я: '{first_name}'")
-                    print(f"  - Прізвище: '{last_name}'")
-                    print(f"  - Телефон: '{phone}'")
-                    print(f"  - Username: {user.username}")
-                    print(f"  - Повідомлення: {msg.message[:100]}...")
-
                     contact_added = await add_contact(client, user.id, first_name, last_name, phone)
                     if contact_added:
                         leads_found += 1
                         # Оновлюємо кеш контактів
                         contacts_cache.add(user.id)
-                        print(f"[SUCCESS] Контакт додано! Загальна кількість: {leads_found}")
-                        print(f"[CONTACT] {author_display} ({cls['confidence']:.2f}): {cls['reason']}")
+                        print(f"[SUCCESS] Додано контакт: {author_display}")
                         print(f"         Повідомлення: {msg.message[:100]}...")
 
                         # Додаємо невелику затримку між додаваннями контактів
@@ -142,20 +133,10 @@ async def scan_once():
             except Exception as e:
                 print(f"[ERROR] {ch}: {e}")
 
-        print("\n[FINAL STATS] Загальна статистика сканування:")
-        print(f"  - Загалом переглянуто повідомлень: {total_messages_processed}")
-        print(f"  - Загалом додано контактів: {total_leads_found}")
-        print(f"  - Контактів у адресній книзі після сканування: {len(contacts_cache)}")
-        
-        # Перевіряємо, чи дійсно контакти додалися
-        final_contacts = await get_contacts_list(client)
-        print(f"  - Фінальна перевірка контактів: {len(final_contacts)}")
-        if len(final_contacts) > len(contacts_cache):
-            print(f"[SUCCESS] Додано {len(final_contacts) - len(contacts_cache)} нових контактів!")
-        elif len(final_contacts) == len(contacts_cache):
-            print("[INFO] Кількість контактів не змінилась")
-        else:
-            print("[WARN] Кількість контактів зменшилась - можливо помилка")
+        print(f"\n[STATS] Сканування завершено:")
+        print(f"  - Переглянуто повідомлень: {total_messages_processed}")
+        print(f"  - Додано контактів: {total_leads_found}")
+        print(f"  - Загалом контактів: {len(contacts_cache)}")
 
 async def stream_loop():
     # Простий "пульс" кожні N хвилин — можеш замінити на планувальник/Windows Task Scheduler
