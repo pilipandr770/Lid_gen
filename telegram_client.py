@@ -2,7 +2,7 @@ import datetime as dt
 from typing import List, Optional, Tuple
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
-from telethon.tl.functions.contacts import ImportContactsRequest
+from telethon.tl.functions.contacts import ImportContactsRequest, GetContactsRequest
 from telethon.tl.types import Channel, ChannelParticipantsAdmins, InputPhoneContact
 from config import settings
 
@@ -91,3 +91,29 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
     except Exception as e:
         print(f"[ERROR] Помилка додавання контакту {first_name}: {e}")
         return False
+
+async def get_contacts_list(client: TelegramClient) -> set[int]:
+    """
+    Отримує список ID всіх контактів користувача.
+    """
+    try:
+        contacts = await client(GetContactsRequest(hash=0))
+        contact_ids = set()
+        for user in contacts.users:
+            contact_ids.add(user.id)
+        return contact_ids
+    except Exception as e:
+        print(f"[ERROR] Не вдалося отримати список контактів: {e}")
+        return set()
+
+async def is_contact_exists(client: TelegramClient, user_id: int, contacts_cache: set[int] = None) -> bool:
+    """
+    Перевіряє, чи є користувач у контактах.
+    Використовує кеш для оптимізації, якщо передано.
+    """
+    if contacts_cache is not None:
+        return user_id in contacts_cache
+
+    # Якщо кеша немає - отримуємо список контактів
+    contacts = await get_contacts_list(client)
+    return user_id in contacts

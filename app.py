@@ -4,7 +4,7 @@ import sys
 from typing import Optional
 
 from config import settings
-from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages, has_profile_photo, add_contact
+from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages, has_profile_photo, add_contact, get_contacts_list, is_contact_exists
 from openai_classifier import classify_comment
 
 from telethon.errors import SessionPasswordNeededError
@@ -37,6 +37,11 @@ async def scan_once():
     await login_flow(client)
 
     async with client:
+        # Отримуємо список контактів для перевірки наявності
+        print("[INFO] Завантаження списку контактів...")
+        contacts_cache = await get_contacts_list(client)
+        print(f"[INFO] Знайдено {len(contacts_cache)} контактів у адресній книзі")
+
         for ch in settings.target_channels:
             try:
                 print(f"[INFO] Сканування каналу: {ch}")
@@ -92,6 +97,11 @@ async def scan_once():
                         print(f"[SKIP] {author_display}: немає аватарки (можливо фейк)")
                         continue
 
+                    # ПЕРЕВІРКА: чи контакт вже існує
+                    if await is_contact_exists(client, user.id, contacts_cache):
+                        print(f"[SKIP] {author_display}: вже є у контактах")
+                        continue
+
                     # Якщо всі умови виконані - додаємо контакт
                     first_name = getattr(user, "first_name", "")
                     last_name = getattr(user, "last_name", "")
@@ -100,6 +110,8 @@ async def scan_once():
                     contact_added = await add_contact(client, user.id, first_name, last_name, phone)
                     if contact_added:
                         leads_found += 1
+                        # Оновлюємо кеш контактів
+                        contacts_cache.add(user.id)
                         print(f"[CONTACT] {author_display} ({cls['confidence']:.2f}): {cls['reason']}")
                         print(f"         Повідомлення: {msg.message[:100]}...")
                     else:
