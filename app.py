@@ -4,8 +4,7 @@ import sys
 from typing import Optional
 
 from config import settings
-from storage import init_db, insert_lead, export_csv
-from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages
+from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages, has_profile_photo, add_contact
 from openai_classifier import classify_comment
 
 from telethon.errors import SessionPasswordNeededError
@@ -34,7 +33,6 @@ async def login_flow(client):
             await client.sign_in(password=pw)
 
 async def scan_once():
-    init_db()
     client = make_client()
     await login_flow(client)
 
@@ -88,30 +86,29 @@ async def scan_once():
                         # Для публічних чатів можна спробувати побудувати лінк
                         msg_link = f"https://t.me/{ch_ent.username}/{msg.id}"
 
-                    row = {
-                        "user_id": user.id,
-                        "username": username,
-                        "display_name": author_display,
-                        "channel": ch,
-                        "message_id": msg.id,
-                        "message_text": msg.message[:1000],
-                        "role_label": cls["role"],
-                        "confidence": cls["confidence"],
-                        "reason": cls["reason"],
-                        "message_link": msg_link
-                    }
-                    insert_lead(row)
-                    leads_found += 1
-                    print(f"[LEAD] {author_display} ({cls['confidence']:.2f}): {cls['reason']}")
+                    # ДОДАТКОВА ПЕРЕВІРКА: наявність аватарки
+                    has_photo = await has_profile_photo(client, user.id)
+                    if not has_photo:
+                        print(f"[SKIP] {author_display}: немає аватарки (можливо фейк)")
+                        continue
 
-                print(f"[OK] Канал {ch}: переглянуто {message_count} повідомлень, знайдено {leads_found} лідів")
+                    # Якщо всі умови виконані - додаємо контакт
+                    first_name = getattr(user, "first_name", "")
+                    last_name = getattr(user, "last_name", "")
+                    phone = getattr(user, "phone", "")
+
+                    contact_added = await add_contact(client, user.id, first_name, last_name, phone)
+                    if contact_added:
+                        leads_found += 1
+                        print(f"[CONTACT] {author_display} ({cls['confidence']:.2f}): {cls['reason']}")
+                        print(f"         Повідомлення: {msg.message[:100]}...")
+                    else:
+                        print(f"[FAILED] Не вдалося додати контакт {author_display}")
+
+                print(f"[OK] Канал {ch}: переглянуто {message_count} повідомлень, додано {leads_found} контактів")
                 
             except Exception as e:
                 print(f"[ERROR] {ch}: {e}")
-
-    # Експорт останнього зрізу
-    path = export_csv()
-    print(f"[INFO] Експортовано у {path}")
 
 async def stream_loop():
     # Простий "пульс" кожні N хвилин — можеш замінити на планувальник/Windows Task Scheduler
