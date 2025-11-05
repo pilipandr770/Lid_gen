@@ -78,6 +78,10 @@ async def scan_once():
                         interest_keywords=settings.interest_keywords
                     )
 
+                    # Невелика затримка між запитами до OpenAI
+                    import asyncio
+                    await asyncio.sleep(0.5)
+
                     # Пропускаємо явних промо або низьку впевненість
                     if cls["role"] != "potential_client":
                         continue
@@ -94,12 +98,10 @@ async def scan_once():
                     # ДОДАТКОВА ПЕРЕВІРКА: наявність аватарки
                     has_photo = await has_profile_photo(client, user.id)
                     if not has_photo:
-                        print(f"[SKIP] {author_display}: немає аватарки (можливо фейк)")
                         continue
 
                     # ПЕРЕВІРКА: чи контакт вже існує
                     if await is_contact_exists(client, user.id, contacts_cache):
-                        print(f"[SKIP] {author_display}: вже є у контактах")
                         continue
 
                     # Якщо всі умови виконані - додаємо контакт
@@ -114,8 +116,12 @@ async def scan_once():
                         contacts_cache.add(user.id)
                         print(f"[CONTACT] {author_display} ({cls['confidence']:.2f}): {cls['reason']}")
                         print(f"         Повідомлення: {msg.message[:100]}...")
+
+                        # Додаємо невелику затримку між додаваннями контактів
+                        import asyncio
+                        await asyncio.sleep(1)
                     else:
-                        print(f"[FAILED] Не вдалося додати контакт {author_display}")
+                        print(f"[SKIP] {author_display}: не вдалося додати контакт")
 
                 print(f"[OK] Канал {ch}: переглянуто {message_count} повідомлень, додано {leads_found} контактів")
                 

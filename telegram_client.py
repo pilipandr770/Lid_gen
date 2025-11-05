@@ -60,9 +60,22 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
     """
     try:
         # Обробляємо None значення
-        first_name = first_name or ""
-        last_name = last_name or ""
-        phone = phone or ""
+        first_name = (first_name or "").strip()
+        last_name = (last_name or "").strip()
+        phone = (phone or "").strip()
+
+        # Очищаємо ім'я від спеціальних символів та обмежуємо довжину
+        def clean_name(name: str) -> str:
+            if not name:
+                return ""
+            # Видаляємо емодзі та спеціальні символи
+            import re
+            name = re.sub(r'[^\w\s\-_]', '', name)
+            # Обмежуємо довжину
+            return name[:50] if name else ""
+
+        first_name = clean_name(first_name)
+        last_name = clean_name(last_name)
 
         # Створюємо повне ім'я
         full_name = f"{first_name} {last_name}".strip()
@@ -84,10 +97,11 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
         else:
             # Якщо номера немає - просто позначаємо як контакт через ім'я
             # Це створить "тимчасовий" контакт без номера
+            contact_name = first_name or full_name
             contact = InputPhoneContact(
                 client_id=user_id,
                 phone="",  # Порожній номер
-                first_name=first_name or full_name,
+                first_name=contact_name,
                 last_name=last_name
             )
             result = await client(ImportContactsRequest([contact]))
@@ -95,12 +109,12 @@ async def add_contact(client: TelegramClient, user_id: int, first_name: str, las
                 print(f"[SUCCESS] Контакт '{full_name}' доданий як тимчасовий")
                 return True
 
-        print(f"[WARN] Не вдалося додати контакт '{full_name}'")
+        print(f"[WARN] Не вдалося додати контакт '{full_name}' (можливо вже існує)")
         return False
 
     except Exception as e:
         full_name = f"{first_name or ''} {last_name or ''}".strip() or f"User_{user_id}"
-        print(f"[ERROR] Помилка додавання контакту '{full_name}': {e}")
+        print(f"[ERROR] Помилка додавання контакту '{full_name}': {str(e)}")
         return False
 
 async def get_contacts_list(client: TelegramClient) -> set[int]:
