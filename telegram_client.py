@@ -6,9 +6,18 @@ from telethon.tl.functions.contacts import ImportContactsRequest, GetContactsReq
 from telethon.tl.types import Channel, ChannelParticipantsAdmins, InputPhoneContact
 from config import settings
 
+import os
+from telethon.sessions import StringSession
+
 SESSION_NAME = "tg_session"
 
 def make_client() -> TelegramClient:
+    # Перевіряємо, чи є сесія в змінних оточення (для Render/Docker)
+    session_str = os.getenv("TELEGRAM_SESSION")
+    if session_str:
+        return TelegramClient(StringSession(session_str), settings.telegram_api_id, settings.telegram_api_hash)
+    
+    # Якщо немає, використовуємо файл (локальна розробка)
     return TelegramClient(SESSION_NAME, settings.telegram_api_id, settings.telegram_api_hash)
 
 async def get_subscribed_channels(client: TelegramClient) -> List[Channel]:

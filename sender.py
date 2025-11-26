@@ -7,8 +7,10 @@ from telethon import TelegramClient
 from messages_config import INVITE_MESSAGES
 from telegram_client import get_contacts_list
 
-SENT_USERS_FILE = "sent_users.txt"
-LAST_RUN_FILE = "last_sender_run.txt"
+# Використовуємо DATA_DIR для збереження стану
+data_dir = os.getenv("DATA_DIR", ".")
+SENT_USERS_FILE = os.path.join(data_dir, "sent_users.txt")
+LAST_RUN_FILE = os.path.join(data_dir, "last_sender_run.txt")
 
 def load_sent_users():
     if not os.path.exists(SENT_USERS_FILE):

@@ -2,7 +2,11 @@ import sqlite3
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
-DB_PATH = Path("leads.sqlite")
+import os
+
+# Якщо задана змінна DATA_DIR (наприклад, на Render з Persistent Disk), використовуємо її
+data_dir = os.getenv("DATA_DIR", ".")
+DB_PATH = Path(data_dir) / "leads.sqlite"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS leads (

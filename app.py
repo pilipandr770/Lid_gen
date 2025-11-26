@@ -33,11 +33,12 @@ async def login_flow(client):
             pw = input("Увімкнено 2FA. Введи пароль: ")
             await client.sign_in(password=pw)
 
-async def scan_once():
-    client = make_client()
-    await login_flow(client)
+async def scan_once(client):
+    # client = make_client() # Removed to use passed client
+    # await login_flow(client) # Removed to use passed client
 
-    async with client:
+    if True: # Preserving indentation level
+
         # Отримуємо список контактів для перевірки наявності
         contacts_cache = await get_contacts_list(client)
 
@@ -137,23 +138,24 @@ async def scan_once():
 
 async def stream_loop():
     # Простий "пульс" кожні N хвилин — можеш замінити на планувальник/Windows Task Scheduler
-    import time
     from sender import process_invites
     
     client = make_client()
     await login_flow(client)
     
-    while True:
-        try:
-            # 1. Сканування нових лідів
-            await scan_once()
+    async with client:
+        while True:
+            try:
+                # 1. Сканування нових лідів
+                await scan_once(client)
+                
+                # 2. Розсилка запрошень (кожні 30 хвилин, перевірка всередині функції)
+                await process_invites(client)
+                
+            except Exception as e:
+                print(f"Error in stream_loop: {e}")
             
-            # 2. Розсилка запрошень (кожні 30 хвилин, перевірка всередині функції)
-            await process_invites(client)
-            
-        except Exception as e:
-            pass
-        time.sleep(300)  # 5 хвилин пауза
+            await asyncio.sleep(300)  # 5 хвилин пауза
 
 def main():
     parser = argparse.ArgumentParser()
@@ -168,7 +170,12 @@ def main():
     if args.stream:
         asyncio.run(stream_loop())
     else:
-        asyncio.run(scan_once())
+        async def run_once():
+            client = make_client()
+            await login_flow(client)
+            async with client:
+                await scan_once(client)
+        asyncio.run(run_once())
 
 if __name__ == "__main__":
     main()
