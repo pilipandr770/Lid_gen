@@ -1,5 +1,5 @@
 import datetime as dt
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from telethon import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.contacts import ImportContactsRequest, GetContactsRequest
@@ -11,11 +11,21 @@ SESSION_NAME = "tg_session"
 def make_client() -> TelegramClient:
     return TelegramClient(SESSION_NAME, settings.telegram_api_id, settings.telegram_api_hash)
 
-async def resolve_linked_chat(client: TelegramClient, channel_username: str) -> Tuple[Optional[Channel], Optional[int]]:
+async def get_subscribed_channels(client: TelegramClient) -> List[Channel]:
+    """
+    Повертає список каналів, на які підписаний користувач.
+    """
+    channels = []
+    async for dialog in client.iter_dialogs():
+        if dialog.is_channel:
+            channels.append(dialog.entity)
+    return channels
+
+async def resolve_linked_chat(client: TelegramClient, channel_input: Union[str, Channel]) -> Tuple[Optional[Channel], Optional[int]]:
     """
     Повертає (ChannelEntity, linked_chat_id) для каналу; якщо немає прив'язаного чату — (entity, None).
     """
-    entity = await client.get_entity(channel_username)
+    entity = await client.get_entity(channel_input)
     full = await client(GetFullChannelRequest(channel=entity))
     linked = getattr(full.full_chat, "linked_chat_id", None)
     return entity, linked

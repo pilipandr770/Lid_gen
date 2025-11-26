@@ -4,10 +4,11 @@ import sys
 from typing import Optional
 
 from config import settings
-from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages, has_profile_photo, add_contact, get_contacts_list, is_contact_exists
+from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages, has_profile_photo, add_contact, get_contacts_list, is_contact_exists, get_subscribed_channels
 from openai_classifier import classify_comment
 
 from telethon.errors import SessionPasswordNeededError
+from telethon.tl.types import User
 
 def _safe_name(user) -> str:
     parts = []
@@ -45,12 +46,23 @@ async def scan_once():
         total_messages_processed = 0
         total_leads_found = 0
 
-        for ch in settings.target_channels:
+        channels_to_scan = []
+        if settings.target_channels:
+            channels_to_scan = settings.target_channels
+        else:
+            print("[INFO] TARGET_CHANNELS не вказано, отримую список підписок...")
+            channels_to_scan = await get_subscribed_channels(client)
+            print(f"[INFO] Знайдено {len(channels_to_scan)} каналів.")
+
+        for ch in channels_to_scan:
             try:
-                print(f"[INFO] Сканування каналу: {ch}")
+                # Для логування назви каналу
+                ch_name = ch if isinstance(ch, str) else getattr(ch, 'title', getattr(ch, 'username', 'Unknown'))
+                print(f"[INFO] Сканування каналу: {ch_name}")
+                
                 ch_ent, linked_id = await resolve_linked_chat(client, ch)
                 if not linked_id:
-                    print(f"[WARN] Канал {ch}: немає пов'язаного чату для коментарів.")
+                    print(f"[WARN] Канал {ch_name}: немає пов'язаного чату для коментарів.")
                     continue
 
                 admin_ids = await get_admin_ids(client, linked_id)
@@ -66,7 +78,7 @@ async def scan_once():
                         continue
                     
                     user = await msg.get_sender()
-                    if not user:
+                    if not user or not isinstance(user, User):
                         continue
 
                     author_display = _safe_name(user)
@@ -156,15 +168,16 @@ def main():
     parser.add_argument("--stream", action="store_true", help="Безкінечний цикл (кожні 5 хвилин)")
     args = parser.parse_args()
 
-    if not settings.target_channels:
-        print("Заповни TARGET_CHANNELS у .env (через кому).")
-        sys.exit(1)
     if not settings.openai_api_key:
         print("OPENAI_API_KEY не вказано у .env.")
         sys.exit(1)
 
     print(f"[INFO] Налаштування завантажено:")
-    print(f"  - Канали: {settings.target_channels}")
+    if settings.target_channels:
+        print(f"  - Канали (з .env): {settings.target_channels}")
+    else:
+        print(f"  - Канали: Всі підписки (TARGET_CHANNELS пустий)")
+    print(f"  - Ключові слова: {settings.interest_keywords}")
     print(f"  - Ключові слова: {settings.interest_keywords}")
     print(f"  - Днів назад: {settings.days_lookback}")
     print(f"  - Поріг впевненості: {settings.lead_confidence_threshold}")
