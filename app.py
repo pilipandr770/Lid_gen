@@ -39,9 +39,7 @@ async def scan_once():
 
     async with client:
         # Отримуємо список контактів для перевірки наявності
-        print("[INFO] Завантаження списку контактів...")
         contacts_cache = await get_contacts_list(client)
-        print(f"[INFO] Знайдено {len(contacts_cache)} контактів у адресній книзі")
 
         total_messages_processed = 0
         total_leads_found = 0
@@ -50,23 +48,15 @@ async def scan_once():
         if settings.target_channels:
             channels_to_scan = settings.target_channels
         else:
-            print("[INFO] TARGET_CHANNELS не вказано, отримую список підписок...")
             channels_to_scan = await get_subscribed_channels(client)
-            print(f"[INFO] Знайдено {len(channels_to_scan)} каналів.")
 
         for ch in channels_to_scan:
             try:
-                # Для логування назви каналу
-                ch_name = ch if isinstance(ch, str) else getattr(ch, 'title', getattr(ch, 'username', 'Unknown'))
-                print(f"[INFO] Сканування каналу: {ch_name}")
-                
                 ch_ent, linked_id = await resolve_linked_chat(client, ch)
                 if not linked_id:
-                    print(f"[WARN] Канал {ch_name}: немає пов'язаного чату для коментарів.")
                     continue
 
                 admin_ids = await get_admin_ids(client, linked_id)
-                print(f"[INFO] Знайдено {len(admin_ids)} адмінів у чаті")
                 
                 # Прохід за коментарями
                 message_count = 0
@@ -129,37 +119,40 @@ async def scan_once():
                         leads_found += 1
                         # Оновлюємо кеш контактів
                         contacts_cache.add(user.id)
-                        print(f"[SUCCESS] Додано контакт: {author_display}")
-                        print(f"         Повідомлення: {msg.message[:100]}...")
 
                         # Додаємо невелику затримку між додаваннями контактів
                         import asyncio
                         await asyncio.sleep(1)
                     else:
-                        print(f"[SKIP] {author_display}: не вдалося додати контакт")
+                        pass
 
-                print(f"[OK] Канал {ch}: переглянуто {message_count} повідомлень, додано {leads_found} контактів")
                 total_messages_processed += message_count
                 total_leads_found += leads_found
                 
             except Exception as e:
-                print(f"[ERROR] {ch}: {e}")
+                pass
 
-        print(f"\n[STATS] Сканування завершено:")
-        print(f"  - Переглянуто повідомлень: {total_messages_processed}")
-        print(f"  - Додано контактів: {total_leads_found}")
-        print(f"  - Загалом контактів: {len(contacts_cache)}")
+        # Перевіряємо, чи дійсно контакти додалися
+        final_contacts = await get_contacts_list(client)
 
 async def stream_loop():
     # Простий "пульс" кожні N хвилин — можеш замінити на планувальник/Windows Task Scheduler
     import time
+    from sender import process_invites
+    
+    client = make_client()
+    await login_flow(client)
+    
     while True:
         try:
-            print(f"[STREAM] Початок циклу сканування...")
+            # 1. Сканування нових лідів
             await scan_once()
-            print(f"[STREAM] Цикл завершено. Пауза 5 хвилин...")
+            
+            # 2. Розсилка запрошень (кожні 30 хвилин, перевірка всередині функції)
+            await process_invites(client)
+            
         except Exception as e:
-            print("[STREAM ERROR]", e)
+            pass
         time.sleep(300)  # 5 хвилин пауза
 
 def main():
@@ -171,16 +164,6 @@ def main():
     if not settings.openai_api_key:
         print("OPENAI_API_KEY не вказано у .env.")
         sys.exit(1)
-
-    print(f"[INFO] Налаштування завантажено:")
-    if settings.target_channels:
-        print(f"  - Канали (з .env): {settings.target_channels}")
-    else:
-        print(f"  - Канали: Всі підписки (TARGET_CHANNELS пустий)")
-    print(f"  - Ключові слова: {settings.interest_keywords}")
-    print(f"  - Ключові слова: {settings.interest_keywords}")
-    print(f"  - Днів назад: {settings.days_lookback}")
-    print(f"  - Поріг впевненості: {settings.lead_confidence_threshold}")
 
     if args.stream:
         asyncio.run(stream_loop())
