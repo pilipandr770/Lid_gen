@@ -3,9 +3,13 @@ import os
 import time
 import random
 from datetime import datetime, timedelta
+import pytz
 from telethon import TelegramClient
 from messages_config import INVITE_MESSAGES
 from telegram_client import get_contacts_list
+
+# Часова зона Києва
+KYIV_TZ = pytz.timezone('Europe/Kyiv')
 
 # Використовуємо DATA_DIR для збереження стану
 data_dir = os.getenv("DATA_DIR", ".")
@@ -37,13 +41,20 @@ def update_last_run_time():
 
 async def process_invites(client: TelegramClient):
     """
-    Відправляє одне запрошення одному контакту, якщо пройшло 30 хвилин з останньої розсилки.
+    Відправляє одне запрошення одному контакту, якщо пройшло 15 хвилин з останньої розсилки.
+    Працює тільки з 9:00 до 21:00 за Київським часом.
     """
+    # Перевірка робочих годин (9:00 - 21:00 за Києвом)
+    kyiv_now = datetime.now(KYIV_TZ)
+    if kyiv_now.hour < 9 or kyiv_now.hour >= 21:
+        print(f"[SENDER] Зараз {kyiv_now.strftime('%H:%M')} (Київ) - неробочі години, пропускаємо")
+        return
+    
     last_run = get_last_run_time()
     now = time.time()
     
-    # Перевірка чи пройшло 30 хвилин (1800 секунд)
-    if now - last_run < 1800:
+    # Перевірка чи пройшло 15 хвилин (900 секунд)
+    if now - last_run < 900:
         return
 
     try:
