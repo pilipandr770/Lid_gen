@@ -1,11 +1,29 @@
 import argparse
 import asyncio
+import os
 import sys
 from datetime import datetime
 from typing import Optional
 import pytz
+from aiohttp import web
 
 from config import settings
+
+# HTTP сервер для health-check (Render Web Service)
+async def health_handler(request):
+    return web.Response(text="OK", status=200)
+
+async def start_health_server():
+    """Запускає HTTP сервер для health-check на порту з PORT env (або 10000)"""
+    port = int(os.environ.get("PORT", 10000))
+    app = web.Application()
+    app.router.add_get("/", health_handler)
+    app.router.add_get("/health", health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"[HTTP] Health-check server running on port {port}")
 from telegram_client import make_client, resolve_linked_chat, get_admin_ids, iter_recent_discussion_messages, has_profile_photo, add_contact, get_contacts_list, is_contact_exists, get_subscribed_channels
 from openai_classifier import (
     classify_comment, 
@@ -291,6 +309,9 @@ async def stream_loop():
     """
     from sender import process_invites
     from content_bot import process_content
+    
+    # Запускаємо HTTP сервер для health-check (Render Web Service)
+    await start_health_server()
     
     # Ініціалізуємо базу даних
     init_db()

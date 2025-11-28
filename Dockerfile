@@ -20,5 +20,8 @@ RUN mkdir -p /data
 ENV PYTHONUNBUFFERED=1
 ENV DATA_DIR=/data
 
+# Відкриваємо порт для health-check (Render встановить PORT автоматично)
+EXPOSE 10000
+
 # Команда запуску
 CMD ["python", "app.py", "--stream"]
