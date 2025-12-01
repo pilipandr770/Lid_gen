@@ -39,10 +39,14 @@ def update_last_run_time():
     with open(LAST_RUN_FILE, "w") as f:
         f.write(str(time.time()))
 
-async def process_invites(client: TelegramClient):
+async def process_invites(client: TelegramClient, contacts_cache: set = None):
     """
     Відправляє одне запрошення одному контакту, якщо пройшло 5 хвилин з останньої розсилки.
     Працює тільки з 9:00 до 21:00 за Київським часом.
+    
+    Args:
+        client: Telegram клієнт
+        contacts_cache: Кеш контактів (якщо None - завантажиться заново)
     """
     # Перевірка робочих годин (9:00 - 21:00 за Києвом)
     kyiv_now = datetime.now(KYIV_TZ)
@@ -58,8 +62,11 @@ async def process_invites(client: TelegramClient):
         return
 
     try:
-        # Отримуємо контакти
-        contacts = await get_contacts_list(client)
+        # Використовуємо переданий кеш або отримуємо контакти
+        if contacts_cache is None:
+            contacts = await get_contacts_list(client)
+        else:
+            contacts = contacts_cache
         sent_users = load_sent_users()
         
         # Знаходимо тих, кому ще не писали

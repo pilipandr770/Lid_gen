@@ -7,13 +7,18 @@ from telethon.tl.types import Channel, ChannelParticipantsAdmins, InputPhoneCont
 from config import settings
 
 import os
+from dotenv import load_dotenv
 from telethon.sessions import StringSession
+
+# Завантажуємо .env ще раз для впевненості
+load_dotenv()
 
 SESSION_NAME = "tg_session"
 
 def make_client() -> TelegramClient:
     # Перевіряємо, чи є сесія в змінних оточення (для Render/Docker)
     session_str = os.getenv("TELEGRAM_SESSION")
+    print(f"[DEBUG] TELEGRAM_SESSION: {'set (' + str(len(session_str)) + ' chars)' if session_str else 'not set'}")
     if session_str:
         return TelegramClient(StringSession(session_str), settings.telegram_api_id, settings.telegram_api_hash)
     

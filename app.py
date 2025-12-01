@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import datetime as dt
 import os
 import sys
 from datetime import datetime
@@ -65,7 +66,7 @@ async def login_flow(client):
             pw = input("Увімкнено 2FA. Введи пароль: ")
             await client.sign_in(password=pw)
 
-async def scan_once(client, days_override: int = None, batch_size: int = None, use_batch_api: bool = False):
+async def scan_once(client, days_override: int = None, batch_size: int = None, use_batch_api: bool = False, contacts_cache: set = None):
     """
     Сканує канали на наявність потенційних клієнтів.
     
@@ -74,13 +75,15 @@ async def scan_once(client, days_override: int = None, batch_size: int = None, u
         days_override: Скільки днів назад перевіряти (замінює settings.days_lookback)
         batch_size: Скільки каналів обробити за раз (None = всі)
         use_batch_api: Використовувати Batch API (50% дешевше, але результати через 24 год)
+        contacts_cache: Кеш контактів (якщо None - завантажиться заново)
     """
     from storage import is_message_checked, mark_message_checked
     
     days_to_check = days_override if days_override else settings.days_lookback
 
-    # Отримуємо список контактів для перевірки наявності
-    contacts_cache = await get_contacts_list(client)
+    # Використовуємо переданий кеш або отримуємо список контактів
+    if contacts_cache is None:
+        contacts_cache = await get_contacts_list(client)
 
     total_messages_processed = 0
     total_leads_found = 0
@@ -319,6 +322,10 @@ async def stream_loop():
     client = make_client()
     await login_flow(client)
     
+    # Глобальний кеш контактів (оновлюється раз на годину)
+    contacts_cache = set()
+    last_contacts_update = None
+    
     async with client:
         print("[APP] 🚀 Бот запущено!")
         print("[APP] Розклад:")
@@ -334,6 +341,18 @@ async def stream_loop():
                 kyiv_now = datetime.now(KYIV_TZ)
                 current_hour = kyiv_now.hour
                 current_date = kyiv_now.date()
+                
+                # Оновлюємо кеш контактів раз на годину
+                if last_contacts_update is None or (kyiv_now - last_contacts_update).total_seconds() > 3600:
+                    try:
+                        contacts_cache = await get_contacts_list(client)
+                        last_contacts_update = kyiv_now
+                        print(f"[APP] 📇 Кеш контактів оновлено: {len(contacts_cache)} контактів")
+                    except Exception as e:
+                        print(f"[APP] ⚠️ Не вдалося оновити кеш контактів: {e}")
+                        # Якщо помилка - спробуємо через 10 хвилин
+                        if last_contacts_update is None:
+                            last_contacts_update = kyiv_now - dt.timedelta(minutes=50)
                 
                 # Перевіряємо batch результати кожну годину
                 if last_batch_check_hour != current_hour:
@@ -355,7 +374,7 @@ async def stream_loop():
                     # Повне сканування раз на ніч через Batch API
                     if last_full_scan_date != current_date and not has_pending_batch():
                         print(f"[APP] 🌙 Нічний режим: batch сканування (50% економія)...")
-                        await scan_once(client, days_override=7, use_batch_api=True)
+                        await scan_once(client, days_override=7, use_batch_api=True, contacts_cache=contacts_cache)
                         last_full_scan_date = current_date
                         await asyncio.sleep(1800)  # 30 хв пауза
                     else:
@@ -370,10 +389,10 @@ async def stream_loop():
                     print(f"[APP] ☀️ Денний режим ({kyiv_now.strftime('%H:%M')} Київ)")
                     
                     # Швидке сканування (тільки за 1 день, realtime API)
-                    await scan_once(client, days_override=1, use_batch_api=False)
+                    await scan_once(client, days_override=1, use_batch_api=False, contacts_cache=contacts_cache)
                     
-                    # Розсилка запрошень
-                    await process_invites(client)
+                    # Розсилка запрошень (передаємо кеш)
+                    await process_invites(client, contacts_cache=contacts_cache)
                     
                     # Публікація контенту
                     await process_content(client)
@@ -383,7 +402,7 @@ async def stream_loop():
                 # 🌆 ВЕЧІР (21:00 - 23:59): Тільки сканування
                 else:
                     print(f"[APP] 🌆 Вечірній режим ({kyiv_now.strftime('%H:%M')} Київ)")
-                    await scan_once(client, days_override=1, use_batch_api=False)
+                    await scan_once(client, days_override=1, use_batch_api=False, contacts_cache=contacts_cache)
                     await asyncio.sleep(600)  # 10 хв пауза
                 
             except Exception as e:
