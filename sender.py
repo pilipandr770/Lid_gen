@@ -41,7 +41,7 @@ def update_last_run_time():
 
 async def process_invites(client: TelegramClient):
     """
-    Відправляє одне запрошення одному контакту, якщо пройшло 15 хвилин з останньої розсилки.
+    Відправляє одне запрошення одному контакту, якщо пройшло 5 хвилин з останньої розсилки.
     Працює тільки з 9:00 до 21:00 за Київським часом.
     """
     # Перевірка робочих годин (9:00 - 21:00 за Києвом)
@@ -53,8 +53,8 @@ async def process_invites(client: TelegramClient):
     last_run = get_last_run_time()
     now = time.time()
     
-    # Перевірка чи пройшло 15 хвилин (900 секунд)
-    if now - last_run < 900:
+    # Перевірка чи пройшло 5 хвилин (300 секунд)
+    if now - last_run < 300:
         return
 
     try:
@@ -81,6 +81,11 @@ async def process_invites(client: TelegramClient):
         # Зберігаємо статус
         save_sent_user(target_user_id)
         update_last_run_time()
+        
+        # Додаємо випадкову затримку 1-3 хвилини після відправки (щоб уникнути спам-фільтрів)
+        delay = random.randint(60, 180)  # 1-3 хвилини
+        print(f"[SENDER] Затримка {delay} секунд перед наступним повідомленням")
+        await asyncio.sleep(delay)
         
     except Exception as e:
         print(f"[SENDER ERROR] {e}")
