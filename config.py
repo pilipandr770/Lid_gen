@@ -9,6 +9,7 @@ class Settings(BaseModel):
     telegram_api_id: int = Field(default_factory=lambda: int(os.getenv("TELEGRAM_API_ID", "0")))
     telegram_api_hash: str = os.getenv("TELEGRAM_API_HASH", "")
     telegram_phone: str = os.getenv("TELEGRAM_PHONE", "")
+    telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     target_channels: List[str] = Field(
         default_factory=lambda: [c.strip() for c in os.getenv("TARGET_CHANNELS", "").split(",") if c.strip()]

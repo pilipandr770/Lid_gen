@@ -37,7 +37,7 @@ from openai_classifier import (
 )
 from storage import is_message_checked, mark_message_checked, cleanup_old_checked_messages, init_db
 
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import SessionPasswordNeededError, AuthKeyDuplicatedError
 from telethon.tl.types import User
 
 # Часова зона Києва
@@ -52,7 +52,19 @@ def _safe_name(user) -> str:
     return " ".join(parts).strip() or (user.username or f"id{user.id}")
 
 async def login_flow(client):
-    await client.connect()
+    try:
+        await client.connect()
+    except AuthKeyDuplicatedError:
+        print(
+            "\n[FATAL] ❌ TELEGRAM_SESSION недійсна!\n"
+            "Сесія була використана одночасно з двох IP-адрес (старий та новий контейнер).\n"
+            "Необхідно перегенерувати сесію:\n"
+            "  1. Зупини всі запущені контейнери з цим ботом\n"
+            "  2. Запусти локально: python generate_session.py\n"
+            "  3. Скопіюй новий рядок у ENV змінну TELEGRAM_SESSION\n"
+            "  4. Перезапусти контейнер\n"
+        )
+        sys.exit(1)
     if not await client.is_user_authorized():
         phone = settings.telegram_phone
         if not phone:
@@ -302,6 +314,25 @@ async def process_batch_results(client):
     print(f"[BATCH] ✅ Оброблено batch результати, нових лідів: {leads_found}")
 
 
+async def content_only_loop():
+    """
+    Режим тільки публікацій через Telegram Bot API (без Telethon-сесії).
+    Використовується коли TELEGRAM_SESSION недійсна або відсутня.
+    """
+    from content_bot import process_content
+
+    print("[APP] 📢 Запущено в режимі ТІЛЬКИ ПУБЛІКАЦІЇ (Telethon не використовується)")
+    print(f"[APP] Канал: {os.getenv('CONTENT_CHANNEL', 'не задано')}")
+    print(f"[APP] Інтервал: кожні {os.getenv('CONTENT_INTERVAL_HOURS', '4')} год")
+
+    while True:
+        try:
+            await process_content()
+        except Exception as e:
+            print(f"[APP ERROR] {e}")
+        await asyncio.sleep(300)  # перевірка кожні 5 хв
+
+
 async def stream_loop():
     """
     Головний цикл бота з розумним розкладом:
@@ -309,39 +340,61 @@ async def stream_loop():
     🌙 00:00 - 08:59 (ніч): Повне сканування всіх каналів за 7 днів
     ☀️ 09:00 - 20:59 (день): Розсилка + контент, швидке сканування (1 день)
     🌆 21:00 - 23:59 (вечір): Швидке сканування (1 день)
+    
+    Якщо Telethon-сесія недійсна — автоматично переходить в режим тільки публікацій.
     """
     from sender import process_invites
     from content_bot import process_content
-    
+
     # Запускаємо HTTP сервер для health-check (Render Web Service)
     await start_health_server()
-    
+
     # Ініціалізуємо базу даних
     init_db()
-    
-    client = make_client()
-    await login_flow(client)
-    
+
+    # Спроба підключитись через Telethon
+    telethon_ok = False
+    client = None
+    try:
+        client = make_client()
+        await login_flow(client)
+        # Перевіряємо що це user-акаунт, а не бот
+        me = await client.get_me()
+        if getattr(me, "bot", False):
+            print("[APP] ⚠️ TELEGRAM_SESSION містить bot-сесію, а не user-сесію — переходимо в режим тільки публікацій")
+        else:
+            telethon_ok = True
+    except SystemExit:
+        # login_flow викликає sys.exit(1) при AuthKeyDuplicatedError — перехоплюємо
+        pass
+    except Exception as e:
+        print(f"[APP] ⚠️ Telethon недоступний: {e}")
+
+    if not telethon_ok:
+        print("[APP] ⚠️ Telethon-сесія недійсна або відсутня — переходимо в режим тільки публікацій")
+        await content_only_loop()
+        return
+
     # Глобальний кеш контактів (оновлюється раз на годину)
     contacts_cache = set()
     last_contacts_update = None
-    
+
     async with client:
         print("[APP] 🚀 Бот запущено!")
         print("[APP] Розклад:")
         print("[APP]   🌙 00:00-08:59: Batch сканування (7 днів, 50% дешевше)")
         print("[APP]   ☀️ 09:00-20:59: Розсилка + контент + швидке сканування (1 день)")
         print("[APP]   🌆 21:00-23:59: Швидке сканування (1 день)")
-        
+
         last_full_scan_date = None
         last_batch_check_hour = None
-        
+
         while True:
             try:
                 kyiv_now = datetime.now(KYIV_TZ)
                 current_hour = kyiv_now.hour
                 current_date = kyiv_now.date()
-                
+
                 # Оновлюємо кеш контактів раз на годину
                 if last_contacts_update is None or (kyiv_now - last_contacts_update).total_seconds() > 3600:
                     try:
@@ -350,10 +403,9 @@ async def stream_loop():
                         print(f"[APP] 📇 Кеш контактів оновлено: {len(contacts_cache)} контактів")
                     except Exception as e:
                         print(f"[APP] ⚠️ Не вдалося оновити кеш контактів: {e}")
-                        # Якщо помилка - спробуємо через 10 хвилин
                         if last_contacts_update is None:
                             last_contacts_update = kyiv_now - dt.timedelta(minutes=50)
-                
+
                 # Перевіряємо batch результати кожну годину
                 if last_batch_check_hour != current_hour:
                     if has_pending_batch():
@@ -362,16 +414,15 @@ async def stream_loop():
                         if status.get("status") == "completed":
                             await process_batch_results(client)
                     last_batch_check_hour = current_hour
-                
+
                 # Очищення старих записів раз на добу о 3:00
                 if current_hour == 3 and last_full_scan_date != current_date:
                     deleted = cleanup_old_checked_messages(days=14)
                     if deleted > 0:
                         print(f"[APP] 🧹 Очищено {deleted} старих записів з кешу")
-                
+
                 # 🌙 НІЧ (00:00 - 08:59): Batch сканування (50% дешевше)
                 if current_hour < 9:
-                    # Повне сканування раз на ніч через Batch API
                     if last_full_scan_date != current_date and not has_pending_batch():
                         print(f"[APP] 🌙 Нічний режим: batch сканування (50% економія)...")
                         await scan_once(client, days_override=7, use_batch_api=True, contacts_cache=contacts_cache)
@@ -383,28 +434,21 @@ async def stream_loop():
                         else:
                             print(f"[APP] 🌙 Нічний режим: очікування (batch вже відправлено)")
                         await asyncio.sleep(600)  # 10 хв
-                
+
                 # ☀️ ДЕНЬ (09:00 - 20:59): Активна робота
                 elif current_hour < 21:
                     print(f"[APP] ☀️ Денний режим ({kyiv_now.strftime('%H:%M')} Київ)")
-                    
-                    # Швидке сканування (тільки за 1 день, realtime API)
                     await scan_once(client, days_override=1, use_batch_api=False, contacts_cache=contacts_cache)
-                    
-                    # Розсилка запрошень (передаємо кеш)
                     await process_invites(client, contacts_cache=contacts_cache)
-                    
-                    # Публікація контенту
-                    await process_content(client)
-                    
+                    await process_content()
                     await asyncio.sleep(300)  # 5 хв пауза
-                
+
                 # 🌆 ВЕЧІР (21:00 - 23:59): Тільки сканування
                 else:
                     print(f"[APP] 🌆 Вечірній режим ({kyiv_now.strftime('%H:%M')} Київ)")
                     await scan_once(client, days_override=1, use_batch_api=False, contacts_cache=contacts_cache)
                     await asyncio.sleep(600)  # 10 хв пауза
-                
+
             except Exception as e:
                 print(f"[APP ERROR] {e}")
                 await asyncio.sleep(60)  # 1 хв пауза при помилці

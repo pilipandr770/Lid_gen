@@ -7,13 +7,14 @@ import os
 import time
 from datetime import datetime
 import pytz
+import aiohttp
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from telegram_client import make_client
 from rss_fetcher import fetch_rss_feeds, mark_article_as_processed
 from content_generator import generate_article
+from config import settings
 
 # Часова зона Києва
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
@@ -56,18 +57,30 @@ def update_last_run_time():
         f.write(str(time.time()))
 
 
-async def publish_content(client, channel: str, content: str) -> bool:
-    """Публікує контент в канал."""
+async def publish_content(channel: str, content: str) -> bool:
+    """Публікує контент в канал через Telegram Bot API."""
+    bot_token = settings.telegram_bot_token
+    if not bot_token:
+        print("[CONTENT ERROR] TELEGRAM_BOT_TOKEN не налаштовано в .env")
+        return False
     try:
-        await client.send_message(channel, content)
-        print(f"[CONTENT] ✅ Опубліковано в {channel}")
-        return True
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {"chat_id": channel, "text": content}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    print(f"[CONTENT] ✅ Опубліковано в {channel}")
+                    return True
+                else:
+                    print(f"[CONTENT ERROR] Bot API: {data.get('description')}")
+                    return False
     except Exception as e:
         print(f"[CONTENT ERROR] Помилка публікації: {e}")
         return False
 
 
-async def process_content(client):
+async def process_content(client=None):
     """
     Основна функція обробки контенту.
     Перевіряє чи пройшов інтервал, отримує RSS, генерує та публікує.
@@ -95,9 +108,13 @@ async def process_content(client):
     if not feeds:
         print("[CONTENT] RSS_FEEDS не налаштовано в .env")
         return
-    
+
     if not channel:
         print("[CONTENT] CONTENT_CHANNEL не налаштовано в .env")
+        return
+
+    if not settings.telegram_bot_token:
+        print("[CONTENT] TELEGRAM_BOT_TOKEN не налаштовано в .env")
         return
     
     print(f"[CONTENT] Перевіряю {len(feeds)} RSS джерел...")
@@ -120,7 +137,7 @@ async def process_content(client):
         
         if content:
             # Публікуємо
-            success = await publish_content(client, channel, content)
+            success = await publish_content(channel, content)
             
             if success:
                 mark_article_as_processed(article["id"])
@@ -136,38 +153,26 @@ async def process_content(client):
 
 async def content_loop():
     """Безкінечний цикл контент-бота."""
-    from app import login_flow
-    
-    client = make_client()
-    await login_flow(client)
-    
-    async with client:
-        print("[CONTENT BOT] Запущено!")
-        print(f"[CONTENT BOT] Інтервал: кожні {get_interval_hours()} години")
-        print(f"[CONTENT BOT] Канал: {get_content_channel()}")
-        
-        while True:
-            try:
-                await process_content(client)
-            except Exception as e:
-                print(f"[CONTENT ERROR] {e}")
-            
-            await asyncio.sleep(300)  # Перевірка кожні 5 хвилин
+    print("[CONTENT BOT] Запущено!")
+    print(f"[CONTENT BOT] Інтервал: кожні {get_interval_hours()} години")
+    print(f"[CONTENT BOT] Канал: {get_content_channel()}")
+
+    while True:
+        try:
+            await process_content()
+        except Exception as e:
+            print(f"[CONTENT ERROR] {e}")
+
+        await asyncio.sleep(300)  # Перевірка кожні 5 хвилин
 
 
 async def run_once():
     """Одноразовий запуск (для тестування)."""
-    from app import login_flow
-    
-    client = make_client()
-    await login_flow(client)
-    
-    async with client:
-        # Примусово скидаємо таймер для тесту
-        if os.path.exists(LAST_CONTENT_RUN_FILE):
-            os.remove(LAST_CONTENT_RUN_FILE)
-        
-        await process_content(client)
+    # Примусово скидаємо таймер для тесту
+    if os.path.exists(LAST_CONTENT_RUN_FILE):
+        os.remove(LAST_CONTENT_RUN_FILE)
+
+    await process_content()
 
 
 if __name__ == "__main__":
